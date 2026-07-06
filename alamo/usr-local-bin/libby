@@ -1,0 +1,6 @@
+#!/bin/bash
+export LITELLM_URL=http://10.0.60.48:4000
+export LITELLM_KEY=$(cat /opt/libreqos-mcp/.litellm_key 2>/dev/null)
+export LIBBY_MODEL=qwen3.6-35b-a3b
+export LQOS_API=http://127.0.0.1:9200
+exec /opt/libreqos-mcp/venv/bin/python3 /opt/libreqos-mcp/libby.py "$@"

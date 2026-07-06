@@ -1,0 +1,20 @@
+[Unit]
+Description=Libby (local) web chat + RAG backend (FastAPI/SSE)
+After=network-online.target lqos-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/libreqos-mcp
+EnvironmentFile=/opt/libreqos-mcp/.litellm_env
+Environment=LITELLM_URL=http://10.0.60.48:4000
+Environment=LIBBY_MODEL=qwen3.6-35b-a3b
+Environment=LQOS_API=http://127.0.0.1:9200
+ExecStart=/opt/libreqos-mcp/venv/bin/uvicorn libby_web:app --host 0.0.0.0 --port 9201 --workers 1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+[Unit]
+Description=Keep i40e RX/TX rings at max + MTU 9216 (XDP/scheduler reset them)
+[Service]
+Type=oneshot
+ExecStart=/opt/libreqos-mcp/lqos-ring-guard.sh

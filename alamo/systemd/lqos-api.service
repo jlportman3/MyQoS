@@ -1,0 +1,16 @@
+[Unit]
+Description=LibreQoS read-only Local API (uvicorn)
+After=network-online.target lqosd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/libreqos-mcp
+ExecStart=/opt/libreqos-mcp/venv/bin/uvicorn lqos_api:app --host 0.0.0.0 --port 9200 --workers 1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Libby (local)</title>
+<style>
+  :root { --bg:#12151c; --panel:#1a1f29; --edge:#2a3140; --fg:#e6e9ef;
+          --mut:#8b93a7; --acc:#4da3ff; --usr:#243244; --ast:#1e2530;
+          --err:#3a2530; --errfg:#ff9a9a; }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,
+         Segoe UI, Roboto, Helvetica, Arial, sans-serif; display:flex;
+         flex-direction:column; }
+  header { display:flex; align-items:center; gap:.6rem; padding:.7rem 1rem;
+           border-bottom:1px solid var(--edge); background:var(--panel); }
+  header .dot { width:9px; height:9px; border-radius:50%; background:#3ddc84;
+                box-shadow:0 0 6px #3ddc84; }
+  header h1 { font-size:1rem; margin:0; font-weight:600; }
+  header .tag { color:var(--mut); font-size:.75rem; border:1px solid var(--edge);
+                padding:.1rem .45rem; border-radius:10px; }
+  #log { flex:1; overflow-y:auto; padding:1rem; max-width:900px; width:100%;
+         margin:0 auto; }
+  .msg { margin:.5rem 0; display:flex; }
+  .msg.user { justify-content:flex-end; }
+  .bubble { padding:.6rem .85rem; border-radius:12px; max-width:80%;
+            white-space:normal; word-wrap:break-word; border:1px solid var(--edge); }
+  .msg.user .bubble { background:var(--usr); }
+  .msg.assistant .bubble { background:var(--ast); }
+  .msg.error .bubble { background:var(--err); color:var(--errfg); font-size:.9rem; }
+  .reason { color:var(--mut); font-style:italic; font-size:.85rem;
+            white-space:pre-wrap; margin-bottom:.4rem; border-left:2px solid var(--edge);
+            padding-left:.6rem; }
+  .bubble :first-child { margin-top:0; } .bubble :last-child { margin-bottom:0; }
+  .bubble code { background:#0d1017; padding:.1rem .3rem; border-radius:4px;
+                 font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.9em; }
+  .bubble pre { background:#0d1017; padding:.6rem .8rem; border-radius:8px;
+                overflow-x:auto; } .bubble pre code { background:none; padding:0; }
+  table.lqos-table { border-collapse:collapse; margin:.5rem 0; }
+  table.lqos-table th, table.lqos-table td { border:1px solid var(--edge);
+                                             padding:.3rem .55rem; text-align:left; }
+  table.lqos-table th { background:#0d1017; }
+  footer { border-top:1px solid var(--edge); background:var(--panel);
+           padding:.6rem 1rem; }
+  .composer { display:flex; gap:.5rem; max-width:900px; margin:0 auto; }
+  #q { flex:1; resize:none; background:var(--bg); color:var(--fg);
+       border:1px solid var(--edge); border-radius:10px; padding:.55rem .7rem;
+       font:inherit; max-height:180px; }
+  #send { background:var(--acc); color:#04101f; border:0; border-radius:10px;
+          padding:0 1.1rem; font-weight:600; cursor:pointer; }
+  #send:disabled { opacity:.5; cursor:default; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot"></span>
+  <h1>Libby</h1>
+  <span class="tag">local · same-origin SSE</span>
+</header>
+<div id="log"></div>
+<footer>
+  <div class="composer">
+    <textarea id="q" rows="1" placeholder="Ask about the shaper, a circuit, an IP, RTT, CAKE health, or the docs…"></textarea>
+    <button id="send">Send</button>
+  </div>
+</footer>
+<script>
+"use strict";
+const log = document.getElementById("log");
+const q   = document.getElementById("q");
+const send = document.getElementById("send");
+
+function el(cls){ const d=document.createElement("div"); d.className=cls; return d; }
+function scroll(){ log.scrollTop = log.scrollHeight; }
+
+function addMsg(role){
+  const wrap = el("msg "+role);
+  const bubble = el("bubble");
+  wrap.appendChild(bubble);
+  log.appendChild(wrap);
+  scroll();
+  return bubble;
+}
+
+// ---- minimal, XSS-safe markdown renderer -------------------------------
+function esc(s){ return s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function inline(s){
+  s = esc(s);
+  s = s.replace(/`([^`]+)`/g, (m,c)=>"<code>"+c+"</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+                '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return s;
+}
+function renderMd(src){
+  const lines = src.split(/\n/);
+  let html="", i=0;
+  while(i<lines.length){
+    let ln = lines[i];
+    // fenced code
+    if(/^```/.test(ln)){
+      let code=""; i++;
+      while(i<lines.length && !/^```/.test(lines[i])){ code+=lines[i]+"\n"; i++; }
+      i++; html += "<pre><code>"+esc(code)+"</code></pre>"; continue;
+    }
+    // table: header | sep | rows
+    if(/\|/.test(ln) && i+1<lines.length && /^\s*\|?[\s:-]*-[\s:|-]*\|?\s*$/.test(lines[i+1])
+       && ln.split("|").filter(x=>x.trim()!=="").length>=2){
+      const cells = r => r.replace(/^\s*\||\|\s*$/g,"").split("|").map(c=>c.trim());
+      let t = "<table class='lqos-table'><thead><tr>";
+      cells(ln).forEach(c=> t += "<th>"+inline(c)+"</th>");
+      t += "</tr></thead><tbody>"; i+=2;
+      while(i<lines.length && /\|/.test(lines[i])){
+        t += "<tr>"; cells(lines[i]).forEach(c=> t+="<td>"+inline(c)+"</td>");
+        t += "</tr>"; i++;
+      }
+      html += t+"</tbody></table>"; continue;
+    }
+    let m;
+    if((m=/^(#{1,3})\s+(.*)$/.exec(ln))){ const n=m[1].length; html+="<h"+n+">"+inline(m[2])+"</h"+n+">"; i++; continue; }
+    if(/^\s*[-*]\s+/.test(ln)){
+      html+="<ul>";
+      while(i<lines.length && /^\s*[-*]\s+/.test(lines[i])){ html+="<li>"+inline(lines[i].replace(/^\s*[-*]\s+/,""))+"</li>"; i++; }
+      html+="</ul>"; continue;
+    }
+    if(/^\s*\d+\.\s+/.test(ln)){
+      html+="<ol>";
+      while(i<lines.length && /^\s*\d+\.\s+/.test(lines[i])){ html+="<li>"+inline(lines[i].replace(/^\s*\d+\.\s+/,""))+"</li>"; i++; }
+      html+="</ol>"; continue;
+    }
+    if(ln.trim()===""){ i++; continue; }
+    // paragraph (gather consecutive non-blank, non-special lines)
+    let para=ln; i++;
+    while(i<lines.length && lines[i].trim()!=="" && !/^(#{1,3}\s|```|\s*[-*]\s|\s*\d+\.\s)/.test(lines[i]) && !/\|/.test(lines[i])){ para+=" "+lines[i]; i++; }
+    html += "<p>"+inline(para)+"</p>";
+  }
+  return html;
+}
+
+// ---- SSE stream handling ------------------------------------------------
+async function ask(text){
+  send.disabled = true;
+  addMsg("user").textContent = text;
+  const bubble = addMsg("assistant");
+  const reasonBox = el("reason"); reasonBox.style.display="none";
+  const contentBox = document.createElement("div");
+  bubble.appendChild(reasonBox); bubble.appendChild(contentBox);
+  let contentRaw="", reasonRaw="", buf="";
+
+  function handleLine(line){
+    line = line.trim();
+    if(!line) return;
+    if(line.startsWith("[error]")){
+      const e = addMsg("error"); e.textContent = line.slice(7).trim(); return;
+    }
+    if(!line.startsWith("data:")) return;
+    const payload = line.slice(5).trim();
+    if(payload === "[DONE]") return;
+    let obj; try { obj = JSON.parse(payload); } catch(_){ contentRaw += payload; contentBox.innerHTML = renderMd(contentRaw); scroll(); return; }
+    const d = (obj.choices && obj.choices[0] && obj.choices[0].delta) || {};
+    if(typeof d.reasoning === "string" && d.reasoning){
+      reasonRaw += d.reasoning; reasonBox.style.display="block";
+      reasonBox.textContent = reasonRaw; scroll();
+    }
+    if(typeof d.content === "string" && d.content){
+      contentRaw += d.content; contentBox.innerHTML = renderMd(contentRaw); scroll();
+    }
+  }
+
+  try {
+    const resp = await fetch("/chat", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Accept":"text/event-stream" },
+      body: JSON.stringify({ message: text }),
+    });
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    while(true){
+      const { value, done } = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, { stream:true });
+      const parts = buf.split(/\r?\n/);
+      buf = parts.pop();
+      for(const p of parts) handleLine(p);
+    }
+    if(buf) handleLine(buf);
+    if(!contentRaw && !reasonRaw) contentBox.textContent = "(no response)";
+  } catch(err){
+    addMsg("error").textContent = "connection error: " + err;
+  } finally {
+    send.disabled = false;
+    q.focus();
+  }
+}
+
+function submit(){
+  const text = q.value.trim();
+  if(!text) return;
+  q.value=""; q.style.height="auto";
+  ask(text);
+}
+send.addEventListener("click", submit);
+q.addEventListener("keydown", e => {
+  if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); submit(); }
+});
+q.addEventListener("input", () => { q.style.height="auto"; q.style.height=Math.min(q.scrollHeight,180)+"px"; });
+q.focus();
+</script>
+</body>
+</html>
