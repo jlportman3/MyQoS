@@ -13,6 +13,7 @@ const sponsorMessages = [
 ];
 
 export function sponsorTag(parentId) {
+    return; // Alamo: Insight/sponsor upsell toasts disabled
     if (!window.hasLts) {
         const client = get_ws_client();
         const handler = () => {

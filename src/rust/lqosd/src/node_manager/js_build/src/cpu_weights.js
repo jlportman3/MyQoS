@@ -319,7 +319,7 @@ function renderOverview() {
     header.appendChild(status);
     body.appendChild(header);
 
-    if (!window.hasInsight) {
+    if (false) { // Alamo: Insight promo disabled
         const promo = document.createElement("div");
         promo.className = "cpu-affinity-inline-note mb-3";
         promo.innerHTML = 'Enable <a href="lts_trial.html">Insight</a> to improve CPU planning with historical data.';
