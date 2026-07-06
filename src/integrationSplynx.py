@@ -426,6 +426,17 @@ def run_splynx_pipeline(strategy_name: str):
 	else:
 		net.createNetworkJson()
 	net.createShapedDevices()
+	# LOCAL PATCH: surface disabled/stopped accounts that still hold an IP as throttled (~200k) circuits
+	try:
+		appendThrottledInactiveAccounts()
+	except Exception as _e:
+		print("[disabled-throttle] skipped: %s" % _e)
+	# LOCAL PATCH: rename devices to <account#> <name> [<vendor>]
+	try:
+		import subprocess as _sp
+		_sp.run(['/opt/libreqos-mcp/venv/bin/python3','/opt/libreqos-mcp/rename_devices.py'],timeout=240,check=False)
+	except Exception as _e2:
+		print('[device-rename] skipped: %s' % _e2)
 
 def buildHeaders():
 	"""
@@ -448,6 +459,73 @@ def splynx_request(target, headers):
 		print("Warning: splynx_api_url uses http://; TLS verification disabled for redirected HTTPS requests.")
 	r = requests.get(url, headers=headers, timeout=120, verify=verify_tls)
 	return r.json()
+
+def appendThrottledInactiveAccounts(throttle_mbps=0.2):
+	"""LOCAL PATCH: surface disabled/stopped Splynx accounts that still hold an assigned IP
+	as named, throttled (~200kbps) circuits so freeloaders are visible + capped in LibreQoS.
+	Appended directly to ShapedDevices.csv (bypasses the 1Mbps floor in createShapedDevices)."""
+	import csv as _csv
+	headers = buildHeaders()
+	inactive = []
+	for status in ("disabled", "stopped"):
+		try:
+			data = splynx_request("admin/customers/customer/0/internet-services?main_attributes%5Bstatus%5D=" + status, headers)
+		except Exception:
+			data = []
+		if isinstance(data, list):
+			for sv in data:
+				ip = str(sv.get("ipv4", "")).strip() or str(sv.get("ipv4_route", "")).strip()
+				if ip and not ip.startswith("0."):
+					inactive.append((status, sv, ip))
+	if not inactive:
+		print("[disabled-throttle] no disabled/stopped services with assigned IPs")
+		return
+	name_for = {}
+	try:
+		for c in (splynx_request("admin/customers/customer", headers) or []):
+			name_for[c.get("id")] = (c.get("name") or "").strip()
+	except Exception:
+		pass
+	existing = set()
+	try:
+		with open("ShapedDevices.csv", newline="") as f:
+			for row in _csv.reader(f):
+				if len(row) > 6 and row[6]:
+					for tok in row[6].split(","):
+						existing.add(tok.split("/")[0].strip())
+	except Exception:
+		pass
+	added = 0
+	t = round(float(throttle_mbps), 2)
+	with open("ShapedDevices.csv", "a", newline="") as f:
+		w = _csv.writer(f)
+		for status, sv, ip in inactive:
+			ip4 = ip.split("/")[0].strip()
+			if not ip4 or ip4 in existing:
+				continue
+			existing.add(ip4)
+			cid = sv.get("customer_id")
+			nm = name_for.get(cid, "")
+			login = str(sv.get("login", "")).strip()
+			cname = ("%s %s (#%s) %s" % (status.upper(), nm, cid, login)).strip()
+			w.writerow([
+				"inactive-%s" % sv.get("id"),
+				cname,
+				"inactive-%s" % sv.get("id"),
+				login or cname,
+				"",
+				"",
+				ip if "/" in ip else ip4,
+				"",
+				0.1,
+				0.1,
+				t,
+				t,
+				"auto: %s account holding IP" % status,
+			])
+			added += 1
+	print("[disabled-throttle] appended %d disabled/stopped accounts at %dkbps" % (added, int(t*1000)))
+
 
 def getTariffs(headers):
 	"""
