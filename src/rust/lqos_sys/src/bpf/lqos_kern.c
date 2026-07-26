@@ -171,18 +171,16 @@ int xdp_prog(struct xdp_md *ctx)
             update_heimdall(&dissector, ctx->data_end - ctx->data, heimdall_mode);
         }
 
-        // ALAMO: CPU steering via cpumap — REQUIRED for per-circuit download
-        // rate enforcement (gives CPU/queue locality so the egress HTB shapes
-        // each circuit). LEAN form: no bpf_xdp_adjust_meta (its metadata
-        // fast-path is incompatible with xdp.frags multi-buffer; tc_iphash_to_cpu
-        // re-derives tc_handle via its LPM fallback on TC egress). NOTE:
-        // bpf_redirect_map into a cpumap under xdp.frags is REJECTED (-22) on
-        // i40e/mlx5 until kernel ~6.17 — this build REQUIRES kernel >=6.17.
-        __u32 *cpu_lookup = bpf_map_lookup_elem(&cpus_available, &cpu);
-        if (cpu_lookup) {
-            __u32 cpu_dest = *cpu_lookup;
-            return bpf_redirect_map(&cpu_map, cpu_dest, 0);
-        }
+        // ALAMO: xdp.frags jumbo transparency; the cpumap redirect is DROPPED.
+        // bpf_redirect_map into a cpumap under xdp.frags is rejected (-22) at
+        // program-load on mlx5/ConnectX-4 even on kernel 7.0 (it works on i40e
+        // >=6.17, but we standardize on the universal frags form so ONE build
+        // loads on every driver/kernel). Shaping is preserved: the TC egress
+        // hook (tc_iphash_to_cpu) re-derives tc_handle via LPM and selects the
+        // HTB/CAKE leaf independent of the cpumap; NIC RSS already spreads load
+        // across all combined-channel queues/cores. The cpumap only added
+        // CPU-locality, not shaping correctness.
+        (void)cpu;
     }
 	return XDP_PASS;
 }
