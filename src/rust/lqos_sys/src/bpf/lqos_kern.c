@@ -71,7 +71,10 @@ struct metadata_pass_t {
 };
 
 // XDP Entry Point
-SEC("xdp")
+// ALAMO: xdp.frags (multi-buffer) so 9216 jumbo frames that span multiple
+// buffers are handled transparently for the bump-in-the-wire jumbo backbone
+// (OSPF 4000, links 8000). See the lean cpumap redirect below (needs kernel >=6.17).
+SEC("xdp.frags")
 int xdp_prog(struct xdp_md *ctx)
 {
 #ifdef TRACING
@@ -168,61 +171,18 @@ int xdp_prog(struct xdp_md *ctx)
             update_heimdall(&dissector, ctx->data_end - ctx->data, heimdall_mode);
         }
 
-        // Handle CPU redirection if there is one specified
-        __u32 *cpu_lookup;
-        cpu_lookup = bpf_map_lookup_elem(&cpus_available, &cpu);
-        if (!cpu_lookup) {
-            bpf_debug("Error: CPU %u is not mapped", cpu);
-            return XDP_PASS; // No CPU found
+        // ALAMO: CPU steering via cpumap — REQUIRED for per-circuit download
+        // rate enforcement (gives CPU/queue locality so the egress HTB shapes
+        // each circuit). LEAN form: no bpf_xdp_adjust_meta (its metadata
+        // fast-path is incompatible with xdp.frags multi-buffer; tc_iphash_to_cpu
+        // re-derives tc_handle via its LPM fallback on TC egress). NOTE:
+        // bpf_redirect_map into a cpumap under xdp.frags is REJECTED (-22) on
+        // i40e/mlx5 until kernel ~6.17 — this build REQUIRES kernel >=6.17.
+        __u32 *cpu_lookup = bpf_map_lookup_elem(&cpus_available, &cpu);
+        if (cpu_lookup) {
+            __u32 cpu_dest = *cpu_lookup;
+            return bpf_redirect_map(&cpu_map, cpu_dest, 0);
         }
-        __u32 cpu_dest = *cpu_lookup;
-
-        // Can we adjust the metadata? We'll try to do so, and if we can store the
-        // needed info there. Not all drivers support this, so it has to remain
-        // optional. This call invalidates the ctx->data pointer, so it has to be
-        // done last.
-        int ret = bpf_xdp_adjust_meta(ctx, -round_up(ETH_ALEN, sizeof(struct metadata_pass_t)));
-        if (ret < 0) {
-            #ifdef VERBOSE
-            bpf_debug("Error: unable to adjust metadata, ret: %d", ret);
-            #endif
-        } else {
-            #ifdef VERBOSE
-            bpf_debug("Metadata adjusted, ret: %d", ret);
-            #endif
-
-            __u8 *data_meta = ctx_ptr(ctx, data_meta);
-            __u8 *data_end  = ctx_ptr(ctx, data_end);
-            __u8 *data      = ctx_ptr(ctx, data);
-
-            if (data + ETH_ALEN > data_end || data_meta + round_up(ETH_ALEN, 4) > data) {
-                bpf_debug("Bounds error on the metadata");
-                return XDP_DROP;
-            }
-            struct metadata_pass_t meta = (struct metadata_pass_t) {
-                .tc_handle = tc_handle,
-            };
-            __builtin_memcpy(data_meta, &meta, sizeof(struct metadata_pass_t));
-        }
-
-        // Redirect based on CPU
-#ifdef VERBOSE
-        bpf_debug("(XDP) Zooming to CPU: %u", cpu_dest);
-        bpf_debug("(XDP) Mapped to handle: %u", tc_handle);
-#endif
-        long redirect_result = bpf_redirect_map(&cpu_map, cpu_dest, 0);
-#ifdef VERBOSE
-        bpf_debug("(XDP) Redirect result: %u", redirect_result);
-#endif
-
-#ifdef TRACING
-{
-    __u64 now = bpf_ktime_get_ns();
-    bpf_debug("(XDP) Exit time: %u", now - started);
-}
-#endif
-
-        return redirect_result;
     }
 	return XDP_PASS;
 }

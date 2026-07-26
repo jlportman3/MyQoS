@@ -4042,7 +4042,13 @@ fn handle_commit_batch(
     let resolved_mq_layout = current_mq_layout(&raw_batch, &config, mq_layout);
 
     let mapped_limit = resolve_mapped_circuit_limit();
-    let effective_limit = mapped_limit.effective_limit;
+    // ALAMO cap-free: never enforce the Insight mapped-circuit limit. Upstream
+    // caps unlicensed nodes at DEFAULT_MAPPED_CIRCUITS_LIMIT (1000), silently
+    // dropping every mapped circuit past it (~266 of 1266 here) so they pass
+    // UNSHAPED. We run our own hardware and shape every customer. Force None
+    // (= unlimited) in production; the limiter fn + its unit tests are untouched.
+    let effective_limit: Option<usize> = None;
+    let _ = mapped_limit.effective_limit; // (was the source of effective_limit)
     let limit_label = format_mapped_limit(effective_limit);
 
     if let Some(reason) = bakery_reload_required_reason() {
