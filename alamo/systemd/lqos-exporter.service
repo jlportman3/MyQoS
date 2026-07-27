@@ -1,0 +1,15 @@
+[Unit]
+Description=LibreQoS Prometheus exporter (:9101/metrics) for VictoriaMetrics/Grafana history
+After=network-online.target lqosd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/libreqos-mcp
+ExecStart=/opt/libreqos-mcp/venv/bin/python3 /opt/libreqos-mcp/lqos_exporter.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

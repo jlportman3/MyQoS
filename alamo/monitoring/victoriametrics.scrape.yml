@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: lqos-shaper
+    static_configs:
+      - targets: ["10.0.63.156:9101"]
+        labels: {shaper: "vm406-25g-active"}
+      - targets: ["10.0.63.50:9101"]
+        labels: {shaper: "vm403-10g-standby"}
