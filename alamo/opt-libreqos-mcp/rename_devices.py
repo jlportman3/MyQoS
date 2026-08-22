@@ -11,7 +11,22 @@ def t1pick(vs): return min(vs, key=lambda v: TIER1.index(v))
 cust_name={c["id"]:(c.get("name") or "") for c in (lq._splynx_get("admin/customers/customer?limit=20000") or []) if isinstance(c,dict) and c.get("id") is not None}
 items=lq._splynx_get("admin/inventory/items?limit=20000") or []
 prods={p["id"]:p for p in (lq._splynx_get("admin/inventory/products?limit=20000") or []) if isinstance(p,dict)}
-vends={v["id"]:(v.get("name") or "") for v in (lq._splynx_get("admin/inventory/vendors") or []) if isinstance(v,dict)}
+# Splynx 6 does NOT expose the vendor-id->name table via API 2.0: admin/inventory/vendors
+# returns 404 (the endpoint is gated/removed for the API key; product.vendor_id is otherwise
+# unresolvable through the API, and admin/inventory/suppliers is a DIFFERENT id-space). This is
+# a static snapshot of Splynx's internal `monitoring_producers` dictionary, keyed by
+# product.vendor_id -> the exact vendor name the Splynx UI shows. Refresh from the Splynx DB
+# table `monitoring_producers` if new hardware vendors are added. (Ref: Splynx 5.2->6, 2026-08-14.)
+PRODUCERS={
+ 1:"MikroTik",  2:"Cisco",     3:"Ericsson",  4:"D-Link",   5:"Juniper",
+ 6:"Ubiquiti",  7:"TP-Link",   8:"Other",     9:"Netonix", 10:"Siklu",
+ 11:"SIAE",     12:"SAF",      13:"Mimosa",   14:"Cambium", 15:"VZ",
+ 16:"ReadyNet", 17:"Voip Innovations",        18:"Planet Technologies",
+ 19:"ZTE",      20:"Proxmox",  21:"Zoom",     22:"Motorola", 23:"Tarana",
+ 24:"Vilo",     25:"TPLink",   26:"Nethatchet", 27:"Grandstream",
+ 28:"Positron", 29:"FWA",      30:"VZW",      31:"Android Phone", 32:"Archer",
+}
+vends=dict(PRODUCERS)
 def iv(it):
     p=prods.get(it.get("product_id")); return vends.get(p.get("vendor_id")) if p else None
 mac2v={}; ser2v={}; custitems={}
@@ -33,7 +48,7 @@ def vendor_for(login,cid):
             if login and login in (str(it.get("barcode") or "").upper(), str(it.get("serial_number") or "").upper()): return iv(it)
         return t1pick([iv(it) for it in t1])
     if login.startswith("ZTEGC"): return "ZTE"
-    if any(iv(it)=="Mikrotik" for it in its): return "Mikrotik"
+    if any(iv(it)=="MikroTik" for it in its): return "MikroTik"
     v=mac2v.get(login) or ser2v.get(login)
     if v: return v
     ivs=[iv(it) for it in its if iv(it)]
