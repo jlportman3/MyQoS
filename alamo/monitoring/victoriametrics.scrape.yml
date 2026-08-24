@@ -7,3 +7,12 @@ scrape_configs:
         labels: {shaper: "vm406-25g-active"}
       - targets: ["10.0.63.50:9101"]
         labels: {shaper: "vm403-10g-standby"}
+  - job_name: lqos-circuits
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    metrics_path: /metrics/circuits
+    static_configs:
+      - targets: ["10.0.63.156:9101"]
+        labels: {shaper: "vm406-25g-active"}
+      - targets: ["10.0.63.50:9101"]
+        labels: {shaper: "vm403-10g-standby"}

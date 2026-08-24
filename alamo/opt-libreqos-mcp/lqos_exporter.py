@@ -1,22 +1,41 @@
 #!/usr/bin/env python3
 """
-LibreQoS Prometheus exporter — exposes shaper metrics at :9101/metrics for
-VictoriaMetrics to scrape (→ Grafana history). Reuses the verified collectors
-from libreqos_mcp.py. Run on the LibreQoS box.
+LibreQoS Prometheus exporter — exposes shaper metrics for VictoriaMetrics (→ Grafana history).
+Reuses the verified collectors from libreqos_mcp.py. Run on the LibreQoS box.
+
+Two endpoints:
+  :9101/metrics          box/aggregate metrics — cheap, scrape every ~15s.
+  :9101/metrics/circuits PER-CIRCUIT metrics for per-customer drill-down — computed by a
+                         background thread every CIRCUIT_REFRESH s (the RTT sample is slow),
+                         served from cache so the scrape never blocks. Scrape every ~60s.
+
+Per-circuit series are labelled by a STABLE key: account (leading digits of the circuit name)
++ ip. The human name/plan live in lqos_circuit_info so renames (e.g. vendor-tag changes)
+don't churn the metric series.
 """
-import sys, re
+import sys, re, threading, time
 sys.path.insert(0, "/opt/libreqos-mcp")
 import libreqos_mcp as lq
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 9101
+CIRCUIT_REFRESH = 60          # seconds between per-circuit recomputes
+
+_CIRCUIT_CACHE = "# per-circuit metrics warming up\n"
+_CIRCUIT_LOCK = threading.Lock()
 
 
 def _san(s):
     return re.sub(r'[^A-Za-z0-9_]', '_', str(s))
 
 
+def _esc(s):
+    """Escape a Prometheus label VALUE."""
+    return str(s).replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+
+
 def collect():
+    """Box/aggregate metrics — fast."""
     out = []
     def m(name, val, labels=""):
         try:
@@ -75,21 +94,86 @@ def collect():
     return "\n".join(out) + "\n"
 
 
+def collect_circuits():
+    """PER-CIRCUIT metrics for per-customer drill-down. Slow (~10-15s: RTT sample + flow scan)."""
+    out = []
+    def m(name, val, labels):
+        try:
+            float(val)
+        except (TypeError, ValueError):
+            return
+        out.append(f'{name}{{{labels}}} {val}')
+
+    rtt = lq._pping_rtt()             # tc_handle -> {avg,median,max,samples}
+    retr = lq._flowbee_retransmits()  # tc_handle -> count
+    circ = lq._tc_to_circuit()        # tc_handle -> [name, ip, plan_dl, plan_ul, down_bytes, up_bytes]
+    seen = 0
+    for h in (set(circ) | set(rtt) | set(retr)):
+        c = circ.get(h, [None, None, None, None, 0, 0])
+        name = c[0] or ""
+        ip = c[1] or ""
+        # STABLE key: leading account digits of the circuit name; skip truly unmapped rows
+        am = re.match(r'\s*(\d+)', name)
+        account = am.group(1) if am else ""
+        if not account and not ip:
+            continue  # unmapped tc handle — not a customer circuit
+        tc = "%x:%x" % (h >> 16, h & 0xffff)
+        lab = f'account="{_esc(account)}",ip="{_esc(ip)}"'
+        seen += 1
+        # throughput as cumulative byte counters -> rate() in Grafana = bps
+        m("lqos_circuit_bytes_total", c[4], lab + ',dir="down"')
+        m("lqos_circuit_bytes_total", c[5], lab + ',dir="up"')
+        # plan (gauge, Mbps)
+        if c[2] is not None: m("lqos_circuit_plan_mbps", c[2], lab + ',dir="down"')
+        if c[3] is not None: m("lqos_circuit_plan_mbps", c[3], lab + ',dir="up"')
+        # RTT (ms) — only when we have passive samples this window
+        r = rtt.get(h)
+        if r:
+            if r.get("avg") is not None:    m("lqos_circuit_rtt_ms", r["avg"], lab + ',stat="avg"')
+            if r.get("median") is not None: m("lqos_circuit_rtt_ms", r["median"], lab + ',stat="median"')
+            if r.get("max") is not None:    m("lqos_circuit_rtt_ms", r["max"], lab + ',stat="max"')
+            if r.get("samples") is not None: m("lqos_circuit_rtt_samples", r["samples"], lab)
+        # TCP retransmits (counter-ish over the flow window)
+        m("lqos_circuit_retransmits", retr.get(h, 0), lab)
+        # info: human name + tc handle for Grafana display / joins (name kept OUT of the metric labels)
+        out.append(f'lqos_circuit_info{{{lab},name="{_esc(name)}",tc="{_esc(tc)}"}} 1')
+    out.append(f'lqos_circuit_export_count {seen}')
+    return "\n".join(out) + "\n"
+
+
+def _circuit_refresher():
+    global _CIRCUIT_CACHE
+    while True:
+        t0 = time.monotonic()
+        try:
+            text = collect_circuits()
+        except Exception as e:
+            text = f'# per-circuit collect failed: {_esc(e)}\nlqos_circuit_export_count 0\n'
+        with _CIRCUIT_LOCK:
+            _CIRCUIT_CACHE = text
+        # keep a steady ~CIRCUIT_REFRESH cadence regardless of collect duration
+        time.sleep(max(5, CIRCUIT_REFRESH - (time.monotonic() - t0)))
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/metrics":
             body = collect().encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; version=0.0.4")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        elif self.path == "/metrics/circuits":
+            with _CIRCUIT_LOCK:
+                body = _CIRCUIT_CACHE.encode()
         else:
-            self.send_response(404); self.end_headers()
+            self.send_response(404); self.end_headers(); return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; version=0.0.4")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
     def log_message(self, *a):
         pass
 
 
 if __name__ == "__main__":
-    print(f"lqos_exporter on :{PORT}/metrics")
+    threading.Thread(target=_circuit_refresher, daemon=True).start()
+    print(f"lqos_exporter on :{PORT}/metrics (+ /metrics/circuits, refresh {CIRCUIT_REFRESH}s)")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

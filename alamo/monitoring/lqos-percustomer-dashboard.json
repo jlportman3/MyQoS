@@ -1,0 +1,86 @@
+{
+  "uid": "lqos-customer",
+  "title": "LibreQoS — Per-Customer",
+  "tags": ["libreqos", "alamo"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "shaper", "type": "query", "label": "Shaper",
+        "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+        "definition": "label_values(lqos_circuit_export_count, shaper)",
+        "query": {"query": "label_values(lqos_circuit_export_count, shaper)", "refId": "shaper"},
+        "current": {"text": "vm406-25g-active", "value": "vm406-25g-active"},
+        "includeAll": false, "refresh": 2, "sort": 1
+      },
+      {
+        "name": "account", "type": "query", "label": "Account #",
+        "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+        "definition": "label_values(lqos_circuit_info{shaper=~\"$shaper\"}, account)",
+        "query": {"query": "label_values(lqos_circuit_info{shaper=~\"$shaper\"}, account)", "refId": "account"},
+        "includeAll": false, "multi": false, "refresh": 2, "sort": 3
+      }
+    ]
+  },
+  "panels": [
+    {"id": 1, "type": "table", "title": "Selected customer", "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+     "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+     "options": {"showHeader": true},
+     "fieldConfig": {"defaults": {}, "overrides": [
+       {"matcher": {"id": "byName", "options": "Time"}, "properties": [{"id": "custom.hidden", "value": true}]},
+       {"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "custom.hidden", "value": true}]},
+       {"matcher": {"id": "byName", "options": "__name__"}, "properties": [{"id": "custom.hidden", "value": true}]},
+       {"matcher": {"id": "byName", "options": "job"}, "properties": [{"id": "custom.hidden", "value": true}]},
+       {"matcher": {"id": "byName", "options": "instance"}, "properties": [{"id": "custom.hidden", "value": true}]}
+     ]},
+     "targets": [{"refId": "A", "expr": "lqos_circuit_info{shaper=~\"$shaper\", account=~\"$account\"}", "instant": true, "format": "table"}]},
+
+    {"id": 2, "type": "timeseries", "title": "Download — actual vs plan (Mbps)  [account $account]", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+     "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+     "fieldConfig": {"defaults": {"unit": "Mbits", "custom": {"drawStyle": "line", "fillOpacity": 15}},
+       "overrides": [{"matcher": {"id": "byName", "options": "plan"}, "properties": [{"id": "custom.drawStyle", "value": "line"}, {"id": "custom.lineStyle", "value": {"dash": [8, 6], "fill": "dash"}}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}]},
+     "targets": [
+       {"refId": "A", "expr": "rate(lqos_circuit_bytes_total{shaper=~\"$shaper\", account=~\"$account\", dir=\"down\"}[5m])*8/1e6", "legendFormat": "actual {{ip}}"},
+       {"refId": "B", "expr": "lqos_circuit_plan_mbps{shaper=~\"$shaper\", account=~\"$account\", dir=\"down\"}", "legendFormat": "plan"}]},
+
+    {"id": 3, "type": "timeseries", "title": "Upload — actual vs plan (Mbps)", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+     "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+     "fieldConfig": {"defaults": {"unit": "Mbits", "custom": {"drawStyle": "line", "fillOpacity": 15}},
+       "overrides": [{"matcher": {"id": "byName", "options": "plan"}, "properties": [{"id": "custom.lineStyle", "value": {"dash": [8, 6], "fill": "dash"}}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}]},
+     "targets": [
+       {"refId": "A", "expr": "rate(lqos_circuit_bytes_total{shaper=~\"$shaper\", account=~\"$account\", dir=\"up\"}[5m])*8/1e6", "legendFormat": "actual {{ip}}"},
+       {"refId": "B", "expr": "lqos_circuit_plan_mbps{shaper=~\"$shaper\", account=~\"$account\", dir=\"up\"}", "legendFormat": "plan"}]},
+
+    {"id": 4, "type": "timeseries", "title": "RTT / latency (ms)", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+     "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+     "fieldConfig": {"defaults": {"unit": "ms", "custom": {"drawStyle": "line", "fillOpacity": 5}}, "overrides": []},
+     "targets": [{"refId": "A", "expr": "lqos_circuit_rtt_ms{shaper=~\"$shaper\", account=~\"$account\"}", "legendFormat": "{{stat}} {{ip}}"}]},
+
+    {"id": 5, "type": "timeseries", "title": "TCP retransmits (per flow window)", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+     "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+     "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+     "targets": [{"refId": "A", "expr": "lqos_circuit_retransmits{shaper=~\"$shaper\", account=~\"$account\"}", "legendFormat": "retransmits {{ip}}"}]},
+
+    {"id": 6, "type": "table", "title": "Worst circuits right now (avg RTT ms) — click a row to drill in", "gridPos": {"h": 10, "w": 24, "x": 0, "y": 21},
+     "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+     "options": {"showHeader": true, "sortBy": [{"displayName": "Value", "desc": true}]},
+     "fieldConfig": {"defaults": {"custom": {"filterable": true}, "links": [
+        {"title": "Drill into account ${__data.fields.account}", "url": "/d/lqos-customer/libreqos-per-customer?var-shaper=${__data.fields.shaper}&var-account=${__data.fields.account}"}
+       ]},
+       "overrides": [
+        {"matcher": {"id": "byName", "options": "Time"}, "properties": [{"id": "custom.hidden", "value": true}]},
+        {"matcher": {"id": "byName", "options": "__name__"}, "properties": [{"id": "custom.hidden", "value": true}]},
+        {"matcher": {"id": "byName", "options": "job"}, "properties": [{"id": "custom.hidden", "value": true}]},
+        {"matcher": {"id": "byName", "options": "instance"}, "properties": [{"id": "custom.hidden", "value": true}]},
+        {"matcher": {"id": "byName", "options": "stat"}, "properties": [{"id": "custom.hidden", "value": true}]},
+        {"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "displayName", "value": "avg RTT ms"}]}
+       ]},
+     "targets": [{"refId": "A", "expr": "topk(50, lqos_circuit_rtt_ms{shaper=~\"$shaper\", stat=\"avg\"})", "instant": true, "format": "table"}]}
+  ],
+  "links": [
+    {"title": "◀ Master history", "type": "link", "url": "/d/lqos-history/libreqos-shaper-history", "targetBlank": false}
+  ]
+}
