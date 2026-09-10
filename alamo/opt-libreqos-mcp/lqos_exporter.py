@@ -79,6 +79,25 @@ def collect():
     except Exception:
         pass
     try:
+        # HONEST dataplane signal: raw kernel rx/tx byte counters + carrier for the
+        # bump-in-the-wire NICs (from lqos.conf). rate()==0 on the ACTIVE shaper = it has
+        # silently fallen OUT of path while systemd still looks healthy (the .47 failure mode).
+        # Verified: these counters DO increment under XDP. Read /sys directly (no bpftool dep).
+        conf = open("/etc/lqos.conf").read()
+        ifaces = set(re.findall(r'(?:to_internet|to_network|isp_interface|internet_interface)\s*=\s*"([^"]+)"', conf))
+        for i in ifaces:
+            try:
+                rx = int(open(f"/sys/class/net/{i}/statistics/rx_bytes").read())
+                tx = int(open(f"/sys/class/net/{i}/statistics/tx_bytes").read())
+                car = open(f"/sys/class/net/{i}/carrier").read().strip()
+                m("lqos_dataplane_rx_bytes_total", rx, f'iface="{i}"')
+                m("lqos_dataplane_tx_bytes_total", tx, f'iface="{i}"')
+                m("lqos_dataplane_carrier", 1 if car == "1" else 0, f'iface="{i}"')
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
         hosts = lq._map_traffic()   # single dump, used for both shaped + unknown
         m("lqos_tracked_ips", len(hosts))
         m("lqos_shaped_ips", sum(1 for _, (d, u, tc) in hosts.items() if tc != 0))
