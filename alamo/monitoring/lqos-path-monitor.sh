@@ -12,12 +12,12 @@
 # we key on RX VOLUME with a byte threshold, and debounce the stall case over N samples so a
 # genuinely quiet minute doesn't false-alarm.
 #
-# NOTE: the primary detector is now the exporter metric lqos_dataplane_rx_bytes_total in
-# VictoriaMetrics (scraped from .156/.50) + a Grafana alert. This script is the Grafana-
-# independent watchdog AND the home for the .47 check (which needs SSH access to .47 that we
-# do not currently have — add a target line below once a key is in place).
+# Primary detector for .156/.50 is the exporter metric lqos_dataplane_rx_bytes_total in
+# VictoriaMetrics + a Grafana alert. This script is the Grafana-independent watchdog AND the
+# ONLY monitor for .47 — which is THIS host (the source-control box, no exporter installed),
+# read locally from /sys. It also SSHes baron@.156/.50 as a belt-and-suspenders cross-check.
 #
-# Deploy: cron/systemd-timer every 5 min on a host that can SSH to the targets.
+# Deploy: systemd timer every 5 min ON .47 (reaches itself locally + .156/.50 via baron's key).
 # Alerting: logs to journal via `logger`; if LQOS_ALERT_WEBHOOK is set, POSTs the alert text.
 set -uo pipefail   # NOT -e: bare (( cond )) returns 1 when false, which -e would treat as fatal
 
