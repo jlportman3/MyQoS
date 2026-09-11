@@ -19,7 +19,7 @@
 #
 # Deploy: cron/systemd-timer every 5 min on a host that can SSH to the targets.
 # Alerting: logs to journal via `logger`; if LQOS_ALERT_WEBHOOK is set, POSTs the alert text.
-set -euo pipefail
+set -uo pipefail   # NOT -e: bare (( cond )) returns 1 when false, which -e would treat as fatal
 
 STATE="${LQOS_MON_STATE:-/var/lib/lqos-path-monitor}"
 SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new"
