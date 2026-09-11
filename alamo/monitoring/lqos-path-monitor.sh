@@ -27,15 +27,17 @@ MIN_MOVING_BYTES="${LQOS_MIN_MOVING_BYTES:-1000000}"   # >1 MB/interval = "traff
 STALL_SAMPLES="${LQOS_STALL_SAMPLES:-3}"               # consecutive stalled samples before firing
 mkdir -p "$STATE"
 
-# target: LABEL|HOST|EXPECT(moving|frozen)|IFACE1,IFACE2
-#   moving = ALERT if RX stays below MIN_MOVING_BYTES for STALL_SAMPLES in a row (active-shaper stall)
-#   frozen = ALERT the moment RX moves at all (out-of-path box re-entered the path)
-# Host "localhost" is read directly from /sys (this watchdog is deployed ON .47, the
-# source-control box that must stay out of path); other hosts are read over SSH as baron.
+# target: LABEL|HOST|EXPECT(moving|frozen)|IFACE1,IFACE2[|THRESHOLD_BYTES]
+#   moving = ALERT if RX stays BELOW threshold for STALL_SAMPLES in a row (active-shaper stall)
+#   frozen = ALERT if RX moves ABOVE threshold in one interval (box entered/surged into the path)
+#   THRESHOLD_BYTES optional per target (default MIN_MOVING_BYTES). Set it HIGH for a box that
+#   legitimately carries a background trickle but must never carry ACTIVE (Gbps) volume.
+# Host "localhost" is read directly from /sys (this watchdog runs ON .47, the source-control
+# box that must stay out of path); other hosts are read over SSH as baron.
 TARGETS=(
-  "srcctl-47|localhost|frozen|enp1s0np0,enp2s0np1"    # THIS box (.47): out of path since 2026-06-27; RX must stay 0
-  "active-156|10.0.63.156|moving|enp1s0np0,enp2s0np1" # active shaper: RX must keep moving
-  "backup-50|10.0.63.50|frozen|enp2s0np2,enp1s0np3"   # backup: idle; RX surge => it went active
+  "srcctl-47|localhost|frozen|enp1s0np0,enp2s0np1"           # THIS box (.47): carrier=0, RX truly 0 -> any move = re-entry
+  "active-156|10.0.63.156|moving|enp1s0np0,enp2s0np1"        # active shaper: RX must keep moving
+  "backup-50|10.0.63.50|frozen|enp2s0np2,enp1s0np3|1000000000" # backup trickles ~300KB/s; only a Gbps SURGE (>1GB/interval) = it went active
 )
 
 alert() {  # $1=text
@@ -61,7 +63,7 @@ rx_sum() {  # $1=host  $2=csv-ifaces -> summed rx_bytes (empty on failure). bash
 }
 
 for t in "${TARGETS[@]}"; do
-  IFS='|' read -r label host expect ifaces <<<"$t"
+  IFS='|' read -r label host expect ifaces thr <<<"$t"; thr=${thr:-$MIN_MOVING_BYTES}
   now=$(rx_sum "$host" "$ifaces")
   if [ -z "$now" ]; then alert "$label ($host) UNREACHABLE — cannot read dataplane RX"; continue; fi
   pf="$STATE/$label.rx"; cf="$STATE/$label.stall"
@@ -69,11 +71,11 @@ for t in "${TARGETS[@]}"; do
   prev=$(<"$pf"); echo "$now" >"$pf"
   delta=$(( now - prev )); (( delta < 0 )) && delta=0   # counter reset/reboot -> treat as no-info
   if [ "$expect" = frozen ]; then
-    (( delta > MIN_MOVING_BYTES )) && alert "$label ($host) RX MOVED +${delta}B this interval — an out-of-path box is passing traffic (check its lqos.conf/network.json)"
+    (( delta > thr )) && alert "$label ($host) RX MOVED +${delta}B this interval (>${thr}) — an out-of-path box is passing ACTIVE traffic (check its lqos.conf/network.json)"
   else # moving
     n=$(<"$cf")
-    if (( delta < MIN_MOVING_BYTES )); then n=$(( n + 1 )); else n=0; fi
+    if (( delta < thr )); then n=$(( n + 1 )); else n=0; fi
     echo "$n" >"$cf"
-    (( n >= STALL_SAMPLES )) && alert "$label ($host) RX STALLED (<${MIN_MOVING_BYTES}B for ${n} samples) — ACTIVE shaper may be out of path; customers may be unshaped"
+    (( n >= STALL_SAMPLES )) && alert "$label ($host) RX STALLED (<${thr}B for ${n} samples) — ACTIVE shaper may be out of path; customers may be unshaped"
   fi
 done
