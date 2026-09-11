@@ -6,5 +6,9 @@ Type=oneshot
 User=baron
 StateDirectory=lqos-path-monitor
 Environment=LQOS_MON_STATE=/var/lib/lqos-path-monitor
-# Set LQOS_ALERT_WEBHOOK=<url> here to POST alerts to a channel (else journal only).
+Environment=LQOS_ALERT_EMAIL=baron@baron.com
+Environment=LQOS_SMTP_HOST=pmg.alamobb.net
+Environment=LQOS_SMTP_PORT=2500
+Environment=LQOS_ALERT_FROM=lqos-path-monitor@qos.alamobb.net
+# (optional) Environment=LQOS_ALERT_WEBHOOK=<url> to also POST alerts.
 ExecStart=/usr/local/bin/lqos-path-monitor.sh

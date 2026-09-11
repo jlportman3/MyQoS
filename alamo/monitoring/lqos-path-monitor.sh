@@ -40,14 +40,35 @@ TARGETS=(
   "backup-50|10.0.63.50|frozen|enp2s0np2,enp1s0np3|1000000000" # backup trickles ~300KB/s; only a Gbps SURGE (>1GB/interval) = it went active
 )
 
-alert() {  # $1=text
+alert() {  # $1=text  -> journal, optional webhook, optional email (via PMG relay)
   logger -t lqos-path-monitor "$1"
   echo "ALERT: $1" >&2
   [ -n "${LQOS_ALERT_WEBHOOK:-}" ] && curl -fsS --max-time 10 -X POST \
     -H 'Content-Type: application/json' \
     -d "$(printf '{"source":"lqos-path-monitor","alert":"%s"}' "$1")" \
     "$LQOS_ALERT_WEBHOOK" >/dev/null 2>&1 || true
+  if [ -n "${LQOS_ALERT_EMAIL:-}" ]; then
+    LQOS_ALERT_TEXT="$1" python3 - <<'PY' 2>&1 | logger -t lqos-path-monitor || true
+import os, smtplib, socket
+from email.message import EmailMessage
+h=socket.gethostname(); body=os.environ.get("LQOS_ALERT_TEXT","(no text)")
+m=EmailMessage()
+m["From"]=os.environ.get("LQOS_ALERT_FROM", f"lqos-path-monitor@{h}")
+m["To"]=os.environ["LQOS_ALERT_EMAIL"]
+m["Subject"]="[LQoS path-monitor] "+body[:120]
+m.set_content(body+f"\n\nhost: {h}\nmonitor: lqos-path-monitor\n")
+try:
+    s=smtplib.SMTP(os.environ.get("LQOS_SMTP_HOST","localhost"), int(os.environ.get("LQOS_SMTP_PORT","25")), timeout=15)
+    s.send_message(m); s.quit()
+    print("email alert sent to "+m["To"])
+except Exception as e:
+    print(f"EMAIL SEND FAILED ({type(e).__name__}: {e}) — alert only in journal")
+PY
+  fi
 }
+
+# selftest: fire one alert through every configured channel, then exit (verifies wiring).
+[ "${1:-}" = selftest ] && { alert "SELFTEST $(date '+%F %T') — path-monitor alert wiring OK"; exit 0; }
 
 rx_sum() {  # $1=host  $2=csv-ifaces -> summed rx_bytes (empty on failure). bash int (exact at PB scale).
   local paths sum=0 v; paths=$(printf '/sys/class/net/%s/statistics/rx_bytes ' ${2//,/ })
