@@ -1,0 +1,10 @@
+[Unit]
+Description=LibreQoS dataplane path-integrity watchdog (alert if the wrong box passes traffic)
+After=network-online.target
+[Service]
+Type=oneshot
+User=baron
+StateDirectory=lqos-path-monitor
+Environment=LQOS_MON_STATE=/var/lib/lqos-path-monitor
+# Set LQOS_ALERT_WEBHOOK=<url> here to POST alerts to a channel (else journal only).
+ExecStart=/usr/local/bin/lqos-path-monitor.sh

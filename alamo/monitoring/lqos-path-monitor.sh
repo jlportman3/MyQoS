@@ -30,10 +30,12 @@ mkdir -p "$STATE"
 # target: LABEL|HOST|EXPECT(moving|frozen)|IFACE1,IFACE2
 #   moving = ALERT if RX stays below MIN_MOVING_BYTES for STALL_SAMPLES in a row (active-shaper stall)
 #   frozen = ALERT the moment RX moves at all (out-of-path box re-entered the path)
+# Host "localhost" is read directly from /sys (this watchdog is deployed ON .47, the
+# source-control box that must stay out of path); other hosts are read over SSH as baron.
 TARGETS=(
-  "active-156|10.0.63.156|moving|enp1s0np0,enp2s0np1"
-  "backup-50|10.0.63.50|frozen|enp2s0np2,enp1s0np3"   # backup should be idle; RX surge => it went active
-  # "srcctl-47|10.0.60.47|frozen|<ifaceA>,<ifaceB>"   # ENABLE once SSH access to .47 exists (out of path since 2026-06-27)
+  "srcctl-47|localhost|frozen|enp1s0np0,enp2s0np1"    # THIS box (.47): out of path since 2026-06-27; RX must stay 0
+  "active-156|10.0.63.156|moving|enp1s0np0,enp2s0np1" # active shaper: RX must keep moving
+  "backup-50|10.0.63.50|frozen|enp2s0np2,enp1s0np3"   # backup: idle; RX surge => it went active
 )
 
 alert() {  # $1=text
@@ -45,9 +47,17 @@ alert() {  # $1=text
     "$LQOS_ALERT_WEBHOOK" >/dev/null 2>&1 || true
 }
 
-rx_sum() {  # $1=host  $2=csv-ifaces -> summed rx_bytes (or empty on failure)
-  local paths; paths=$(printf '/sys/class/net/%s/statistics/rx_bytes ' ${2//,/ })
-  ssh $SSH_OPTS "baron@$1" "cat $paths 2>/dev/null" | paste -sd+ | bc 2>/dev/null || true
+rx_sum() {  # $1=host  $2=csv-ifaces -> summed rx_bytes (empty on failure). bash int (exact at PB scale).
+  local paths sum=0 v; paths=$(printf '/sys/class/net/%s/statistics/rx_bytes ' ${2//,/ })
+  local vals
+  if [ "$1" = localhost ] || [ "$1" = 127.0.0.1 ]; then
+    vals=$(cat $paths 2>/dev/null) || return 0
+  else
+    vals=$(ssh $SSH_OPTS "baron@$1" "cat $paths 2>/dev/null") || return 0
+  fi
+  [ -z "$vals" ] && return 0
+  for v in $vals; do [[ $v =~ ^[0-9]+$ ]] && sum=$((sum + v)); done
+  echo "$sum"
 }
 
 for t in "${TARGETS[@]}"; do
