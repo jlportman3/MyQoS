@@ -79,3 +79,5 @@ for t in "${TARGETS[@]}"; do
     (( n >= STALL_SAMPLES )) && alert "$label ($host) RX STALLED (<${thr}B for ${n} samples) — ACTIVE shaper may be out of path; customers may be unshaped"
   fi
 done
+
+exit 0
