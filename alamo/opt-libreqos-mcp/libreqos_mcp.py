@@ -357,8 +357,15 @@ def find_circuit_for_ip(ip: str) -> dict:
 
 @mcp.tool()
 def traceroute(ip: str) -> str:
-    """Traceroute to an IP (numeric + names), to locate which router/gateway it sits behind."""
-    return _sh(["traceroute", "-w", "2", "-q", "1", "-m", "15", ip], 40)
+    """Traceroute to an IP (numeric + names), to locate which router/gateway it sits behind.
+    ICMP-echo probes (-I): customer CPEs answer ICMP but not the default UDP probes, so UDP
+    mode dies at the last transit router and never reaches the CPE. -I needs a raw socket
+    (root); falls back to UDP mode if we're not privileged, so this degrades instead of failing."""
+    base = ["-w", "2", "-q", "1", "-m", "15", ip]
+    out = _sh(["traceroute", "-I"] + base, 40)
+    if "not have enough privileges" in out or "Operation not permitted" in out:
+        return _sh(["traceroute"] + base, 40)
+    return out
 
 
 @mcp.tool()
