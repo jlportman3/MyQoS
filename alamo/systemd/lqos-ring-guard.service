@@ -1,5 +1,8 @@
 [Unit]
-Description=Keep i40e RX/TX rings at max + MTU 9216 (XDP/scheduler reset them)
+Description=Keep shaping NIC RX/TX rings at hardware max + MTU 9216 (XDP re-attach resets them)
+After=network-online.target
+Wants=network-online.target
+
 [Service]
 Type=oneshot
 ExecStart=/opt/libreqos-mcp/lqos-ring-guard.sh
