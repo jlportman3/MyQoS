@@ -1,0 +1,10 @@
+[Unit]
+Description=Run lqos-burst-guard every 60s (catch classes lqosd rebuilt back to the 1600b default)
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=60
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

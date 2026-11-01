@@ -1,0 +1,11 @@
+[Unit]
+Description=Resize per-circuit HTB burst/cburst to the ceiling (lqosd bakes 1600b default, which under-delivers the ceil ~20%)
+After=lqosd.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# --apply re-applies ONLY classes that drifted (idempotent, one tc -batch). Safe on live traffic:
+# tc class change edits HTB params in place, no flush/disruption. New/rebuilt classes (new circuit,
+# plan change, lqosd restart) sit at 1600b until the next timer tick.
+ExecStart=/opt/libreqos-mcp/lqos-burst-guard.py --apply
