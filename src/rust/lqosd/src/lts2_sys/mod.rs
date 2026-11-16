@@ -13,9 +13,29 @@ use once_cell::sync::Lazy;
 pub use shared_types::RemoteCommand;
 pub mod control_channel;
 
+/// Returns true only when Insight/LTS2 is actually licensed for this install:
+/// `gather_stats` is on AND a `license_key` is configured.
+///
+/// Alamo customization: upstream starts the LTS2 client unconditionally, so an
+/// unlicensed install retries the ingestor every second ("Failed to parse license
+/// key") and keeps an outbound connection to insight.libreqos.com alive. We don't
+/// use Insight, so the client is gated on this predicate. This is a pure gate: when
+/// a key IS present the full client runs exactly as before and the Insight wire
+/// protocol is untouched.
+pub(crate) fn insight_licensed() -> bool {
+    lqos_config::load_config()
+        .map(|c| c.long_term_stats.gather_stats && c.long_term_stats.license_key.is_some())
+        .unwrap_or(false)
+}
+
 pub fn start_lts2(
     control_tx: tokio::sync::mpsc::Sender<control_channel::ControlChannelCommand>,
 ) -> Result<()> {
+    // Alamo: do not start the Insight/LTS2 ingestor unless licensed (see insight_licensed).
+    if !insight_licensed() {
+        tracing::info!("Insight/LTS2 not licensed (no license key); ingestor not started");
+        return Ok(());
+    }
     // Launch the process
     lts2_client::spawn_lts2(control_tx)?;
 

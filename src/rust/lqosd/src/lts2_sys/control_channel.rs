@@ -147,7 +147,16 @@ pub async fn start_control_channel(builder: ControlChannelBuilder) -> Result<()>
 async fn control_channel_loop(mut builder: ControlChannelBuilder) -> Result<()> {
     // Handle the persistent channel to Insight here
     let (tx, rx) = tokio::sync::mpsc::channel::<ConnectionCommand>(1024);
-    tokio::spawn(persistent_connection(rx));
+    // Alamo: only dial insight.libreqos.com when licensed (see lts2_sys::insight_licensed).
+    // Unlicensed, we still drain builder.rx below so the web UI's senders never error or
+    // back-pressure; we just never open the outbound connection. Pure gate — when licensed,
+    // behaviour and the Insight wire protocol are unchanged.
+    if crate::lts2_sys::insight_licensed() {
+        tokio::spawn(persistent_connection(rx));
+    } else {
+        drop(rx);
+        tracing::info!("Insight/LTS2 not licensed; control channel will not connect out");
+    }
 
     while let Some(cmd) = builder.rx.recv().await {
         match cmd {
